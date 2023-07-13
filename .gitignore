@@ -1,12 +1,121 @@
-.idea/
+# In the Name of God, the Originator the Creative
 
-env/
+############################
+# OS X
+############################
 
-dump.rdb
-DataServer/dump.rdb
-AttackMapServer/dump.rdb
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+.Spotlight-V100
+.Trashes
+._*
 
-DataServerDB/GeoLite2-City.mmdb
-DataServerDB/GeoLite2-City.mmdb.gz
-DataServer/__pycache__/
 
+############################
+# Linux
+############################
+
+*~
+
+
+############################
+# Windows
+############################
+
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msm
+*.msp
+
+
+############################
+# Packages
+############################
+
+*.7z
+*.csv
+*.dat
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.zip
+*.com
+*.class
+*.dll
+*.exe
+*.o
+*.seed
+*.so
+*.swo
+*.swp
+*.swn
+*.swm
+*.out
+*.pid
+
+
+############################
+# Logs and databases
+############################
+
+.tmp
+*.log
+*.rdb
+*.sql
+*.sqlite
+*.sqlite3
+*.mmdb
+
+############################
+# Misc.
+############################
+
+*#
+ssl
+.idea
+nbproject
+metatrader
+config.yaml
+*.pyc
+
+############################
+# Node.js
+############################
+
+lib-cov
+lcov.info
+pids
+logs
+results
+node_modules
+.node_history
+
+############################
+# Tests
+############################
+
+testApp
+coverage
+
+############################
+# Build
+############################
+
+main.build
+main.dist
+build
+dist
+main.spec
+
+############################
+# Temp
+############################
