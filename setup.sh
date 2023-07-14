@@ -18,6 +18,7 @@ sudo pip3 install -U -r requirements.txt
 # Configure the DB
 echo "Downloading geoip database..."
 cd ./DB
+chmod +x ./db-dl.sh
 ./db-dl.sh
 cd ..
 
