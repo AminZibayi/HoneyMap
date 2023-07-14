@@ -4,7 +4,7 @@
 echo "Cloning the repository..."
 git clone https://github.com/AminZibayi/HoneyMap.git
 
-# Navigate to the HoneyMap directory
+# Navigate to the HoneyMap directory 
 cd ./HoneyMap
 
 # Install system dependencies
