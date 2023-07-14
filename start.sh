@@ -4,10 +4,13 @@
 systemctl start redis-server
 
 # Start the DataServer
-nohup python3 ./data_server/data_server.py &
+cd ./data_server
+nohup python3 ./data_server.py &
 
 # Start the Fake Syslog Gen Script
-nohup python3 ./data_server/random_syslog_gen.py &
+nohup python3 ./random_syslog_gen.py &
+cd ..
 
 # Start the Map Server
-nohup python3 ./map_server/map_server.py &
+cd ./map_server
+nohup python3 ./map_server.py &
