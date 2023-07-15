@@ -19,6 +19,7 @@ from const import META, PORTMAP
 from argparse import ArgumentParser, RawDescriptionHelpFormatter
 import os
 from sys import exit
+from dotenv import load_dotenv
 
 # from textwrap import dedent
 from time import gmtime, localtime, sleep, strftime
@@ -81,6 +82,10 @@ unknowns = {}
 #            if default not in self:
 #                self[default] = defaults[default]
 # ---------------------------------------------------------
+
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # Create clean dictionary using unclean db dictionary contents

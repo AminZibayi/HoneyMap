@@ -16,6 +16,7 @@ import tornado.websocket
 
 # import re
 
+from dotenv import load_dotenv
 import os
 from sys import exit
 
@@ -39,6 +40,10 @@ service_rgb = {
     "ICMP": "#ffcccc",
     "OTHER": "#6600cc",
 }
+
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 class IndexHandler(tornado.web.RequestHandler):
