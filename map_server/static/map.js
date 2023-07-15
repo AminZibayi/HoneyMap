@@ -18,7 +18,7 @@ var map = L.mapbox.map("map").setView([0, 0], 2).addLayer(L.mapbox.styleLayer("m
 L.control.fullscreen().addTo(map);
 
 // hq coords
-var hqLatLng = new L.LatLng(37.3845, -122.0881);
+var hqLatLng = new L.LatLng(window._env_.HD_LAT, window._env_.HD_LNG);
 
 // hq marker
 L.circle(hqLatLng, 110000, {
