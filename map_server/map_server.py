@@ -258,22 +258,6 @@ def main():
         (r"/env.js", EnvHandler),
     ]
 
-    import os
-    import json
-    from http.server import HTTPServer, BaseHTTPRequestHandler
-
-    class EnvHandler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            if self.path == "/env.js":
-                self.send_response(200)
-                self.send_header("Content-type", "application/javascript")
-                self.end_headers()
-                env = {"HOST": os.getenv("HOST"), "PORT": os.getenv("PORT")}
-                self.wfile.write(bytes(f"window._env_ = {json.dumps(env)}", "utf-8"))
-
-    httpd = HTTPServer(("localhost", 8000), EnvHandler)
-    httpd.serve_forever()
-
     # Define the static path
     # static_path = path.join( path.dirname(__file__), 'static' )
 
