@@ -11,7 +11,7 @@ var webSock = new WebSocket(`ws://${window._env_.CLIENT_HOST}:${window._env_.CLI
 
 // link map
 
-L.mapbox.accessToken = "pk.eyJ1IjoibW1heTYwMSIsImEiOiJjaWgyYWU3NWQweWx2d3ltMDl4eGk5eWY1In0.9YoOkALPP7zaoim34ZITxw";
+L.mapbox.accessToken = window._env_.MAPBOX_TOKEN;
 var map = L.mapbox.map("map").setView([0, 0], 2).addLayer(L.mapbox.styleLayer("mapbox://styles/mapbox/dark-v10"));
 
 // add full screen option

@@ -243,6 +243,7 @@ class EnvHandler(tornado.web.RequestHandler):
         env = {
             "CLIENT_HOST": os.getenv("CLIENT_HOST"),
             "CLIENT_PORT": os.getenv("CLIENT_PORT"),
+            "MAPBOX_TOKEN": os.getenv("MAPBOX_TOKEN"),
         }
         self.set_header("Content-Type", "application/javascript")
         self.write(f"window._env_ = {json.dumps(env)}")
