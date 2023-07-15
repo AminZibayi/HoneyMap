@@ -1,134 +1,92 @@
-## Cyber Security GeoIP Attack Map Visualization
+<h1 align="center">
+  Honey Map
+</h1>
 
-This geoip attack map visualizer was developed to display network attacks on
-your organization in real time. The data server follows a syslog file, and
-parses out source IP, destination IP, source port, and destination port.
-Protocols are determined via common ports, and the visualizations vary in color
-based on protocol type.
+<h3 align="center">
+  Honeypot Attack Map Visualization
+</h3>
+
+<p align="center">
+  This project visualizes cyber attacks against an organization through an immersive geo-visualized threat map.
+</p>
 
 ![Demo Screenshot](screenshot/screenshot.png)
 
-## Important
+- [Features](#features)
+- [Log Parsing and Normalization](#log-parsing-and-normalization)
+- [Getting Started](#getting-started)
+- [License](#license)
 
-This program relies entirely on syslog, and because all appliances format logs differently, you will need to customize the log parsing function(s). If your organization uses a security information and event management system (SIEM), it can probably normalize logs to save you a ton of time writing regex.
+## Features
 
-1. Send all syslog to SIEM.
-2. Use SIEM to normalize logs.
-3. Send normalized logs to the box (any Linux machine running syslog-ng will work) running this software so the data server can parse them.
+- **Interactive World Map Visualization:** Utilizes D3.js, Leaflet.js, and Mapbox to render an interactive world map, providing a visual representation of GeoIP attack data.
+- **IP Origin Tracking:** Includes a table that dynamically tracks and displays the quantity and IP addresses of the origins of attacks.
+- **Country Origin Tracking:** Features another table that tracks and displays the quantity and countries of the origins of attacks.
+- **Responsive Design:** The application is designed with a responsive layout, ensuring compatibility and usability across various screen sizes and devices.
+- **Environment Variables:** The project uses environment variables for configuration, providing flexibility and security for different deployment scenarios.
+- **Automated Setup:** The project includes a setup script that automates the process of cloning the repository, installing dependencies, and configuring the database, making it easy for anyone to get started.
+- **Easy Start and Stop:** The project provides a start script that simplifies the process of starting the necessary services, including the Redis server, DataServer, and MapServer. Stopping the services is also straightforward, making it easy to manage the application.
+- **Automated Data Generation:** The project includes a script for generating random syslog data, simulating real-world data input for testing and demonstration purposes.
 
-## Configs
+## Log Parsing and Normalization
 
-1. Make sure in **/etc/redis/redis.conf** to change **bind 127.0.0.1** to **bind 0.0.0.0** if you plan on running the DataServer on a different machine than the AttackMapServer.
-2. Make sure that the WebSocket address in **/AttackMapServer/index.html** points back to the IP address of the **AttackMapServer** so the browser knows the address of the WebSocket.
-3. Download the MaxMind GeoLite2 database, and change the db_path variable in **DataServer.py** to the wherever you store the database.
-   - ./db-dl.sh
-4. Add headquarters latitude/longitude to hqLatLng variable in **index.html**
-5. Use syslog-gen.py, or syslog-gen.sh to simulate dummy traffic "out of the box."
-6. **IMPORTANT: Remember, this code will only run correctly in a production environment after personalizing the parsing functions. The default parsing function is only written to parse ./syslog-gen.sh traffic.**
+This program needs to read and understand the logs from different devices that
+send syslog messages. However, these devices may have different ways of
+formatting their logs, so you need to adjust the program to match them. To do
+this you have to customize `parse_syslog` function in `data_server.py` file. A
+simpler way to do this is to use a security information and event management
+system (SIEM) that can make the logs more consistent and easier to parse.
 
-## Bugs, Feedback, and Questions
+To use a SIEM, you need to follow these steps:
 
-If you find any errors or bugs, please let me know. Questions and feedback are also welcome, and can be sent to mcmay.web@gmail.com, or open an issue in this repository.
+1. Send all the syslog messages from your devices to the SIEM.
+2. Configure the SIEM to normalize the logs, which means making them follow a common format and structure.
+3. Send the normalized logs from the SIEM to the machine that runs this program, which can be any Linux machine with syslog-ng installed. The program will then be able to parse the logs and display the attacks on the map.
 
-## Deploy example
+## Getting Started
 
-Tested on Ubuntu 16.04 LTS.
+Follow these steps to download, setup, and manage the project:
 
-- Clone the application:
+**Fetch the Setup Script:** Download the `setup.sh` script from the project repository. You can do this using wget or curl:
 
-  ```sh
-  git clone https://github.com/matthewclarkmay/geoip-attack-map.git
-  ```
+```bash
+wget https://raw.githubusercontent.com/AminZibayi/HoneyMap/master/setup.sh
+# or
+curl -O https://raw.githubusercontent.com/AminZibayi/HoneyMap/master/setup.sh
+```
 
-- Install system dependencies:
+**Run the Setup Script:** This will install all necessary dependencies and set up the project for you.
 
-  ```sh
-  sudo apt install python3-pip redis-server
+```bash
+./setup.sh
+```
 
-  ```
+**Adjust the Environment Variables:** After running the setup script, you may
+need to adjust some environment variables based on your specific needs or system
+configuration. You can use the provided `.env.example `file as a template. Rename
+it to .env and adjust the variables as needed.
 
-- Install python requirements:
+**Start the Project:** Use the `start.sh` script to start the project.
 
-  ```sh
-  cd geoip-attack-map
-  sudo pip3 install -U -r requirements.txt
+```bash
+./start.sh
+```
 
-  ```
+_Note:_ This script starts a random syslog generator script that creates
+simulated attack data. In production environment the following line must be
+omitted from the script:
 
-- Start Redis Server:
+```bash
+# Start the Fake Syslog Gen Script
+nohup python3 ./random_syslog_gen.py &
+```
 
-  ```sh
-  redis-server
+**Stop the Project:** You can stop the project by running the `stop.sh` script.
 
-  ```
+```bash
+./stop.sh
+```
 
-- Configure the Data Server DB:
+## License
 
-  ```sh
-  cd DataServerDB
-  ./db-dl.sh
-  cd ..
-
-  ```
-
-- Start the Data Server:
-
-  ```sh
-  cd DataServer
-  sudo python3 DataServer.py
-
-  ```
-
-- Start the Syslog Gen Script, inside DataServer directory:
-
-  - Open a new terminal tab (Ctrl+Shift+T, on Ubuntu).
-
-    ```sh
-    ./syslog-gen.py
-    ./syslog-gen.sh
-    ```
-
-- Configure the Attack Map Server, extract the flags to the right place:
-
-  - Open a new terminal tab (Ctrl+Shift+T, on Ubuntu).
-
-    ```sh
-    cd AttackMapServer/
-    unzip static/flags.zip
-    ```
-
-- Start the Attack Map Server:
-
-  ```sh
-  sudo python3 AttackMapServer.py
-  ```
-
-- Access the Attack Map Server from browser:
-
-  - [http://localhost:8888/](http://localhost:8888/) or [http://127.0.0.1:8888/](http://127.0.0.1:8888/)
-
-  - To access via browser on another computer, use the external IP of the machine running the AttackMapServer.
-
-  - Edit the IP Address in the file "/static/map.js" at "AttackMapServer" directory. From:
-
-    ```javascript
-    var webSock = new WebSocket("ws:/127.0.0.1:8888/websocket");
-    ```
-
-  - To, for example:
-
-    ```javascript
-    var webSock = new WebSocket("ws:/192.168.1.100:8888/websocket");
-    ```
-
-  - Restart the Attack Map Server:
-
-    ```sh
-    sudo python3 AttackMapServer.py
-    ```
-
-  - On the other computer, points the browser to:
-
-    ```sh
-    http://192.168.1.100:8888/
-    ```
+[The MIT License](https://github.com/AminZibayi/Corporio/blob/master/LICENSE)
