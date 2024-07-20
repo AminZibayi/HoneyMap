@@ -1,16 +1,13 @@
 #!/usr/bin/env bash
 
 # Start redis-server
-systemctl start redis-server
+pm2 start redis-server --interpreter="none"  -- --port 6380 -- --protected-mode no
 
 # Start the DataServer
 cd ./data_server
-nohup python3 ./data_server.py &
-
-# Start the Fake Syslog Gen Script
-nohup python3 ./random_syslog_gen.py &
-cd ..
+pm2 start ./data_server.py --interpreter=python3
 
 # Start the Map Server
-cd ./map_server
-nohup python3 ./map_server.py &
+cd ../map_server
+pm2 start ./map_server.py --interpreter=python3
+pm2 save

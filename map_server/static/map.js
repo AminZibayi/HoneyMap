@@ -418,7 +418,15 @@ function redrawCountIP2(hashID, id, countList, codeDict) {
 function handleLegend(msg) {
   var ipCountList = [msg.ips_tracked, msg.iso_code];
   var countryCountList = [msg.countries_tracked, msg.iso_code];
-  var attackList = [msg.event_time, msg.src_ip, msg.iso_code, msg.country, msg.city, msg.protocol];
+  var attackList = [
+    msg.event_time,
+    msg.src_ip,
+    msg.iso_code,
+    msg.country,
+    msg.honeypot,
+    //  msg.city,
+    msg.protocol,
+  ];
   redrawCountIP("#ip-tracking", "ip-tracking", ipCountList, msg.ip_to_code);
   redrawCountIP2("#country-tracking", "country-tracking", countryCountList, msg.country_to_code);
   prependAttackRow("attack-tracking", attackList);
@@ -471,6 +479,62 @@ webSock.onmessage = function (e) {
     console.log(err);
   }
 };
+
+// WEBSOCKET STUFF
+
+const messageHandlers = {
+  Traffic: (msg) => {
+    var srcLatLng = new L.LatLng(msg.src_lat, msg.src_long);
+    var hqPoint = map.latLngToLayerPoint(hqLatLng);
+    var srcPoint = map.latLngToLayerPoint(srcLatLng);
+
+    addCircle(msg, srcLatLng);
+    handleParticle(msg, srcPoint);
+    handleTraffic(msg, srcPoint, hqPoint, srcLatLng);
+    handleLegend(msg);
+    handleLegendType(msg);
+
+    // addMarker(msg.dst_country_name, msg.dst_iso_code, msg.dst_ip, msg.tpot_hostname, dstLatLng);
+    // handleLegend(msg);
+    // handleParticle(msg.color, srcPoint);
+    // handleTraffic(msg.color, srcPoint, dstPoint, srcLatLng);
+  },
+};
+
+function connectWebSocket() {
+  webSock.onclose = function (event) {
+    var reason = "Unknown error reason?";
+    if (event.code == 1000) reason = "[ ] Endpoint terminating connection: Normal closure";
+    else if (event.code == 1001) reason = '[ ] Endpoint terminating connection: Endpoint is "going away"';
+    else if (event.code == 1002) reason = "[ ] Endpoint terminating connection: Protocol error";
+    else if (event.code == 1003) reason = "[ ] Endpoint terminating connection: Unkonwn data";
+    else if (event.code == 1004) reason = "[ ] Endpoint terminating connection: Reserved";
+    else if (event.code == 1005) reason = "[ ] Endpoint terminating connection: No status code";
+    else if (event.code == 1006) reason = "[ ] Endpoint terminating connection: Connection closed abnormally";
+    else if (event.code == 1007)
+      reason = "[ ] Endpoint terminating connection: Message was not consistent with the type of the message";
+    else if (event.code == 1008) reason = '[ ] Endpoint terminating connection: Message "violates policy"';
+    else if (event.code == 1009) reason = "[ ] Endpoint terminating connection: Message is too big";
+    else if (event.code == 1010)
+      reason = "[ ] Endpoint terminating connection: Client failed to negotiate (" + event.reason + ")";
+    else if (event.code == 1011)
+      reason = "[ ] Endpoint terminating connection: Server encountered an unexpected condition";
+    else if (event.code == 1015)
+      reason = "[ ] Endpoint terminating connection: Connection closed due TLS handshake failure";
+    else reason = "[ ] Endpoint terminating connection; Unknown reason";
+    // Log error and display "T-Pot Honeypot Stats" title in red, so we know connection is interrupted
+    console.log(reason + ". Attempting to reconnect ...");
+    setTimeout(connectWebSocket, 5000); // Wait 5 seconds and attempt to reconnect
+  };
+
+  webSock.onmessage = function (e) {
+    var msg = JSON.parse(e.data);
+    let handler = messageHandlers[msg.type];
+    if (handler) handler(msg);
+  };
+}
+
+connectWebSocket();
 
 $(document).on("click", "#informIP #exit", function (e) {
   $("#informIP").hide();

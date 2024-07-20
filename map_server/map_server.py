@@ -1,287 +1,158 @@
 #!/usr/bin/python3
 
-"""
-AUTHOR: Matthew May - mcmay.web@gmail.com
-"""
 
-# Imports
+import asyncio
 import json
-import redis
-import tornadoredis
 
-# import tornado.httpserver
-import tornado.ioloop
-import tornado.web
-import tornado.websocket
-
-# import re
+import aioredis
+from aiohttp import web
 
 from dotenv import load_dotenv
 import os
-from sys import exit
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Within T-Pot: redis_url = 'redis://map_redis:6379'
+# redis_url = 'redis://127.0.0.1:6379'
+# web_port = 1234
+redis_url = "redis://" + os.getenv("REDIS_HOST") + ":" + os.getenv("REDIS_PORT")
+version = "Attack Map Server 2.1.0"
 
 
-# Look up service colors
+# Color Codes for Attack Map
 service_rgb = {
     "FTP": "#ff0000",
     "SSH": "#ff8000",
     "TELNET": "#ffff00",
     "EMAIL": "#80ff00",
-    "WHOIS": "#00ff00",
+    "SQL": "#00ff00",
     "DNS": "#00ff80",
     "HTTP": "#00ffff",
     "HTTPS": "#0080ff",
-    "SQL": "#0000ff",
+    "VNC": "#0000ff",
     "SNMP": "#8000ff",
     "SMB": "#bf00ff",
-    "AUTH": "#ff00ff",
+    "MEDICAL": "#ff00ff",
     "RDP": "#ff0060",
-    "DoS": "#ff0000",
-    "ICMP": "#ffcccc",
-    "OTHER": "#6600cc",
+    "SIP": "#ffccff",
+    "ADB": "#ffcccc",
+    "OTHER": "#ffffff",
 }
 
 
-# Load environment variables from .env file
-load_dotenv()
-
-
-class IndexHandler(tornado.web.RequestHandler):
-    @tornado.web.asynchronous
-    def get(request):
-        request.render("index.html")
-
-
-class WebSocketChatHandler(tornado.websocket.WebSocketHandler):
-    def __init__(self, *args, **kwargs):
-        super(WebSocketChatHandler, self).__init__(*args, **kwargs)
-        self.listen()
-
-    def check_origin(self, origin):
-        return True
-
-    @tornado.gen.engine
-    def listen(self):
-        print("[*] WebSocketChatHandler opened")
-
+async def redis_subscriber(websockets):
+    while True:
         try:
-            # This is the IP address of the DataServer
-            self.client = tornadoredis.Client(os.getenv("HOST"))
-            self.client.connect()
-            print("[*] Connected to Redis server")
-            yield tornado.gen.Task(self.client.subscribe, "attack-map-production")
-            self.client.listen(self.on_message)
-        except Exception as ex:
-            print("[*] Could not connect to Redis server.")
-            print("[*] {}".format(str(ex)))
-
-    def on_close(self):
-        print("[*] Closing connection.")
-
-    # This function is called everytime a Redis message is received
-    def on_message(self, msg):
-        if len(msg) == 0:
-            print("msg == 0\n")
-            return None
-
-        if "ip_blocked" in msg:
-            ip = re.split(":", msg)
-            # fp = open('/mnt/map_attack_blk/LOG4.log','a')
-            # fp.write(ip[1]+"\n")
-            # fp.close()
-
-        try:
-            json_data = json.loads(msg.body)
-        except Exception as ex:
-            return None
-
-        if "msg_type" in json_data:
-            msg_type = json_data["msg_type"]
-        else:
-            msg_type = None
-        if "msg_type2" in json_data:
-            msg_type2 = json_data["msg_type2"]
-        else:
-            msg_type2 = None
-        if "msg_type3" in json_data:
-            msg_type3 = json_data["msg_type3"]
-        else:
-            msg_type3 = None
-        if "protocol" in json_data:
-            protocol = json_data["protocol"]
-        else:
-            protocol = None
-        if "src_ip" in json_data:
-            src_ip = json_data["src_ip"]
-        else:
-            src_ip = None
-        if "dst_ip" in json_data:
-            dst_ip = json_data["dst_ip"]
-        else:
-            dst_ip = None
-        if "src_port" in json_data:
-            src_port = json_data["src_port"]
-        else:
-            src_port = None
-        if "dst_port" in json_data:
-            dst_port = json_data["dst_port"]
-        else:
-            dst_port = None
-        if "latitude" in json_data:
-            src_lat = json_data["latitude"]
-        else:
-            src_lat = None
-        if "longitude" in json_data:
-            src_long = json_data["longitude"]
-        else:
-            src_long = None
-        if "dst_lat" in json_data:
-            dst_lat = json_data["dst_lat"]
-        else:
-            dst_lat = None
-        if "dst_long" in json_data:
-            dst_long = json_data["dst_long"]
-        else:
-            dst_long = None
-        if "city" in json_data:
-            city = json_data["city"]
-        else:
-            city = None
-        if "continent" in json_data:
-            continent = json_data["continent"]
-        else:
-            continent = None
-        if "continent_code" in json_data:
-            continent_code = json_data["continent_code"]
-        else:
-            continent_code = None
-        if "country" in json_data:
-            country = json_data["country"]
-        else:
-            country = None
-        if "iso_code" in json_data:
-            iso_code = json_data["iso_code"]
-        else:
-            iso_code = None
-        if "postal_code" in json_data:
-            postal_code = json_data["postal_code"]
-        else:
-            postal_code = None
-        if protocol:
-            color = service_rgb[protocol]
-        else:
-            color = "#000000"
-        if "event_count" in json_data:
-            event_count = json_data["event_count"]
-        else:
-            event_count = None
-        if "continents_tracked" in json_data:
-            continents_tracked = json_data["continents_tracked"]
-        else:
-            continents_tracked = None
-        if "countries_tracked" in json_data:
-            countries_tracked = json_data["countries_tracked"]
-        else:
-            countries_tracked = None
-        if "ips_tracked" in json_data:
-            ips_tracked = json_data["ips_tracked"]
-        else:
-            ips_tracked = None
-        if "unknowns" in json_data:
-            unknowns = json_data["unknowns"]
-        else:
-            unknowns = None
-        if "event_time" in json_data:
-            event_time = json_data["event_time"]
-        else:
-            event_time = None
-        if "country_to_code" in json_data:
-            country_to_code = json_data["country_to_code"]
-        else:
-            country_to_code = None
-        if "ip_to_code" in json_data:
-            ip_to_code = json_data["ip_to_code"]
-        else:
-            ip_to_code = None
-
-        msg_to_send = {
-            "type": msg_type,
-            "type2": msg_type2,
-            "type3": msg_type3,
-            "protocol": protocol,
-            "src_ip": src_ip,
-            "dst_ip": dst_ip,
-            "src_port": src_port,
-            "dst_port": dst_port,
-            "src_lat": src_lat,
-            "src_long": src_long,
-            "dst_lat": dst_lat,
-            "dst_long": dst_long,
-            "city": city,
-            "continent": continent,
-            "continent_code": continent_code,
-            "country": country,
-            "iso_code": iso_code,
-            "postal_code": postal_code,
-            "color": color,
-            "event_count": event_count,
-            "continents_tracked": continents_tracked,
-            "countries_tracked": countries_tracked,
-            #'ips_tracked': "<a href='" + str(ips_tracked) + "'>" + str(ips_tracked) + "</a>",
-            "ips_tracked": ips_tracked,
-            "unknowns": unknowns,
-            "event_time": event_time,
-            "country_to_code": country_to_code,
-            "ip_to_code": ip_to_code,
-        }
-
-        self.write_message(json.dumps(msg_to_send))
+            # Create a Redis connection
+            redis = await aioredis.from_url(redis_url)
+            # Get the pubsub object for channel subscription
+            pubsub = redis.pubsub()
+            # Subscribe to a Redis channel
+            channel = "attack-map-production"
+            await pubsub.subscribe(channel)
+            print("[*] Redis connection established.")
+            # Start a loop to listen for messages on the channel
+            async with redis.pubsub() as pubsub:
+                await pubsub.subscribe(channel)
+                while True:
+                    try:
+                        msg = await pubsub.get_message(ignore_subscribe_messages=True)
+                        if msg is not None:
+                            try:
+                                # Only take the data and forward as JSON to the connected websocket clients
+                                json_data = json.dumps(json.loads(msg["data"]))
+                                # print(json_data)
+                                # Process all connected websockets in parallel
+                                await asyncio.gather(
+                                    *[ws.send_str(json_data) for ws in websockets]
+                                )
+                            except:
+                                print("Something went wrong while sending JSON data.")
+                        else:
+                            await asyncio.sleep(0.1)
+                    except asyncio.CancelledError:
+                        print("Cancelled.")
+                        break
+        except aioredis.RedisError as e:
+            print("[ ] Waiting for Redis ...")
+            await asyncio.sleep(5)
 
 
-class EnvHandler(tornado.web.RequestHandler):
-    def get(self):
-        env = {
-            "CLIENT_HOST": os.getenv("CLIENT_HOST"),
-            "CLIENT_PORT": os.getenv("CLIENT_PORT"),
-            "MAPBOX_TOKEN": os.getenv("MAPBOX_TOKEN"),
-            "HD_LAT": os.getenv("HD_LAT"),
-            "HD_LNG": os.getenv("HD_LNG"),
-        }
-        self.set_header("Content-Type", "application/javascript")
-        self.write(f"window._env_ = {json.dumps(env)}")
+async def my_websocket_handler(request):
+    # Get the WebSocket object
+    ws = web.WebSocketResponse()
+    # Accept the WebSocket connection
+    await ws.prepare(request)
+    # Add the WebSocket to the list of websockets
+    request.app["websockets"].append(ws)
+    print(
+        f"[*] New WebSocket connection opened. Clients active: {len(request.app['websockets'])}"
+    )
+    # Start a loop to listen for messages
+    async for msg in ws:
+        if msg == aiohttp.WSMsgType.TEXT:
+            # Send the message back to the client
+            await ws.send_str(msg)
+        elif msg == aiohttp.WSMsgType.ERROR:
+            print("[ ] WebSocket connection closed with exception %s" % ws.exception())
+    # Remove the WebSocket from the list of websockets
+    request.app["websockets"].remove(ws)
+    print(
+        f"[ ] Existing WebSocket connection closed. Clients active: {len(request.app['websockets'])}"
+    )
+    return ws
 
 
-def main():
-    # Register handler pages
-    handlers = [
-        (r"/websocket", WebSocketChatHandler),
-        (r"/static/(.*)", tornado.web.StaticFileHandler, {"path": "static"}),
-        (r"/flags/(.*)", tornado.web.StaticFileHandler, {"path": "static/flags"}),
-        (r"/", IndexHandler),
-        (r"/env.js", EnvHandler),
-    ]
+# Serve index.html as static file
+async def my_index_handler(request):
+    return web.FileResponse("index.html")
 
-    # Define the static path
-    # static_path = path.join( path.dirname(__file__), 'static' )
 
-    # Define static settings
-    settings = {
-        #'static_path': static_path
+async def start_background_tasks(app):
+    # Create an empty list to store WebSocket objects
+    app["websockets"] = []
+    # Start the Redis subscriber task
+    app["redis_subscriber"] = asyncio.create_task(redis_subscriber(app["websockets"]))
+
+
+async def cleanup_background_tasks(app):
+    # Cancel the Redis subscriber task
+    app["redis_subscriber"].cancel()
+    # Wait for the Redis subscriber task to finish
+    await app["redis_subscriber"]
+
+
+async def env_handler(request):
+    env = {
+        "CLIENT_HOST": os.getenv("CLIENT_HOST"),
+        "CLIENT_PORT": os.getenv("CLIENT_PORT"),
+        "MAPBOX_TOKEN": os.getenv("MAPBOX_TOKEN"),
+        "HD_LAT": os.getenv("HD_LAT"),
+        "HD_LNG": os.getenv("HD_LNG"),
     }
+    return web.Response(
+        text=f"window._env_ = {json.dumps(env)}", content_type="application/javascript"
+    )
 
-    # Create and start app listening on port 8888
-    try:
-        app = tornado.web.Application(handlers, **settings)
-        app.listen(os.getenv("PORT"))
-        print("[*] Waiting on browser connections...")
-        tornado.ioloop.IOLoop.instance().start()
-    except Exception as appFail:
-        print(appFail)
+
+async def make_webapp():
+    app = web.Application()
+    # logging.basicConfig(level=logging.INFO)
+    app.add_routes(
+        [
+            web.get("/", my_index_handler),
+            web.get("/websocket", my_websocket_handler),
+            web.static("/static/", "static"),
+            web.static("/flags/", "static/flags"),
+            web.get("/env.js", env_handler),
+        ]
+    )
+    app.on_startup.append(start_background_tasks)
+    app.on_cleanup.append(cleanup_background_tasks)
+    return app
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("\nSHUTTING DOWN")
-        exit()
+    print(version)
+    web.run_app(make_webapp(), port=int(os.getenv("PORT")))

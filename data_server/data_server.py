@@ -1,376 +1,567 @@
-#!/usr/bin/python3
+# In the Name of Allah
 
-"""
-AUTHOR: Matthew May - mcmay.web@gmail.com
-"""
-
-# Imports
+import datetime
 import json
-
-# import logging
-import maxminddb
-
-# import re
-import redis
-import io
-
-from const import META, PORTMAP
-
-from argparse import ArgumentParser, RawDescriptionHelpFormatter
+import time
 import os
-from sys import exit
+import pytz
+import redis
+from elasticsearch import Elasticsearch, exceptions as es_exceptions
+from tzlocal import get_localzone
+from dateutil import tz
 from dotenv import load_dotenv
-
-# from textwrap import dedent
-from time import gmtime, localtime, sleep, strftime
-
-# start the Redis server if it isn't started already.
-# $ redis-server
-# default port is 6379
-# make sure system can use a lot of memory and overcommit memory
-
-redis_instance = None
-
-# required input paths
-syslog_path = "/var/log/syslog"
-# syslog_path = '/var/log/reverse-proxy.log'
-db_path = "../DB/GeoLite2-City.mmdb"
-
-# file to log data
-# log_file_out = '/var/log/map_data_server.out'
-
-# ip for headquarters
-hq_ip = "8.8.8.8"
-
-# stats
-server_start_time = strftime("%d-%m-%Y %H:%M:%S", localtime())  # local time
-event_count = 0
-continents_tracked = {}
-countries_tracked = {}
-country_to_code = {}
-ip_to_code = {}
-ips_tracked = {}
-unknowns = {}
-
-# @IDEA
-# ---------------------------------------------------------
-# Use a class to nicely wrap everything:
-# Could attempt to do an access here
-# now without worrying about key errors,
-# or just keep the filled data structure
-#
-# class Instance(dict):
-#
-#    defaults = {
-#                'city': {'names':{'en':None}},
-#                'continent': {'names':{'en':None}},
-#                'continent': {'code':None},
-#                'country': {'names':{'en':None}},
-#                'country': {'iso_code':None},
-#                'location': {'latitude':None},
-#                'location': {'longitude':None},
-#                'location': {'metro_code':None},
-#                'postal': {'code':None}
-#                }
-#
-#    def __init__(self, seed):
-#        self(seed)
-#        backfill()
-#
-#    def backfill(self):
-#        for default in self.defaults:
-#            if default not in self:
-#                self[default] = defaults[default]
-# ---------------------------------------------------------
-
 
 # Load environment variables from .env file
 load_dotenv()
 
+# Within T-Pot: es = Elasticsearch('http://elasticsearch:9200') and redis_ip = 'map_redis'
+es = Elasticsearch("http://127.0.0.1:64298")
+redis_ip = os.getenv("REDIS_HOST")
+# es = Elasticsearch('http://elasticsearch:9200')
+# redis_ip = 'map_redis'
+redis_instance = None
+redis_channel = "attack-map-production"
+version = "Data Server 2.1.0"
+local_tz = get_localzone()
+output_text = os.getenv("TPOT_ATTACKMAP_TEXT")
 
-# Create clean dictionary using unclean db dictionary contents
-def clean_db(unclean):
-    selected = {}
-    for tag in META:
-        head = None
-        if tag["tag"] in unclean:
-            head = unclean[tag["tag"]]
-            for node in tag["path"]:
-                if node in head:
-                    head = head[node]
-                else:
-                    head = None
-                    break
-            selected[tag["lookup"]] = head
+event_count = 1
+ips_tracked = {}
+ports = {}
+ip_to_code = {}
+countries_to_code = {}
+countries_tracked = {}
+continent_tracked = {}
 
-    return selected
+dst_ip = "0.0.0.0"
+dst_lat = 45.945
+dst_long = -66.665
+dst_iso_code = "CA"
+dst_country_name = "Fredericton"
+
+# Color Codes for Attack Map
+service_rgb = {
+    "FTP": "#ff0000",
+    "SSH": "#ff8000",
+    "TELNET": "#ffff00",
+    "EMAIL": "#80ff00",
+    "SQL": "#00ff00",
+    "DNS": "#00ff80",
+    "HTTP": "#00ffff",
+    "HTTPS": "#0080ff",
+    "VNC": "#0000ff",
+    "SNMP": "#8000ff",
+    "SMB": "#bf00ff",
+    "MEDICAL": "#ff00ff",
+    "RDP": "#ff0060",
+    "SIP": "#ffccff",
+    "ADB": "#ffcccc",
+    "OTHER": "#ffffff",
+}
 
 
-def connect_redis():
-    r = redis.StrictRedis(
-        host=os.getenv("REDIS_HOST"), port=os.getenv("REDIS_PORT"), db=0
-    )
+def connect_redis(redis_ip):
+    r = redis.StrictRedis(host=redis_ip, port=os.getenv("REDIS_PORT"), db=0)
     return r
 
 
-def get_msg_type():
-    # @TODO
-    # Add support for more message types later
-    return "Traffic"
+def push_honeypot_stats(honeypot_stats):
+    redis_instance = connect_redis(redis_ip)
+    tmp = json.dumps(honeypot_stats)
+    # print(tmp)
+    redis_instance.publish(redis_channel, tmp)
 
 
-# Check to see if packet is using an interesting TCP/UDP protocol based on source or destination port
-def get_tcp_udp_proto(src_port, dst_port):
-    src_port = int(src_port)
-    dst_port = int(dst_port)
-
-    if src_port in PORTMAP:
-        return PORTMAP[src_port]
-    if dst_port in PORTMAP:
-        return PORTMAP[dst_port]
-
-    return "OTHER"
-
-
-def find_hq_lat_long(hq_ip):
-    hq_ip_db_unclean = parse_maxminddb(db_path, hq_ip)
-    if hq_ip_db_unclean:
-        hq_ip_db_clean = clean_db(hq_ip_db_unclean)
-        dst_lat = hq_ip_db_clean["latitude"]
-        dst_long = hq_ip_db_clean["longitude"]
-        hq_dict = {"dst_lat": dst_lat, "dst_long": dst_long}
-        return hq_dict
-    else:
-        print("Please provide a valid IP address for headquarters")
-        exit()
-
-
-def parse_maxminddb(db_path, ip):
-    try:
-        reader = maxminddb.open_database(db_path)
-        response = reader.get(ip)
-        reader.close()
-        return response
-    except FileNotFoundError:
-        print("DB not found")
-        print("SHUTTING DOWN")
-        exit()
-    except ValueError:
-        return False
-
-
-# @TODO
-# Refactor/improve parsing
-# This function depends heavily on which appliances are generating logs
-# For now it is only here for testing
-
-
-def parse_syslog(line):
-    line = line.split()
-    data = line[-1]
-    data = data.split(",")
-
-    if len(data) != 6:
-        print("NOT A VALID LOG")
-        return False
-    else:
-        src_ip = data[0]
-        dst_ip = data[1]
-        src_port = data[2]
-        dst_port = data[3]
-        type_attack = data[4]
-        cve_attack = data[5]
-        data_dict = {
-            "src_ip": src_ip,
-            "dst_ip": dst_ip,
-            "src_port": src_port,
-            "dst_port": dst_port,
-            "type_attack": type_attack,
-            "cve_attack": cve_attack,
-        }
-        return data_dict
-
-
-def shutdown_and_report_stats():
-    print("\nSHUTTING DOWN")
-    # Report stats tracked
-    print("\nREPORTING STATS...")
-    print("\nEvent Count: {}".format(event_count))  # report event count
-    print("\nContinent Stats...")  # report continents stats
-    for key in continents_tracked:
-        print("{}: {}".format(key, continents_tracked[key]))
-    print("\nCountry Stats...")  # report country stats
-    for country in countries_tracked:
-        print("{}: {}".format(country, countries_tracked[country]))
-    print("\nCountries to iso_codes...")
-    for key in country_to_code:
-        print("{}: {}".format(key, country_to_code[key]))
-    print("\nIP Stats...")  # report IP stats
-    for ip in ips_tracked:
-        print("{}: {}".format(ip, ips_tracked[ip]))
-    print("\nIPs to iso_codes...")
-    for key in ip_to_code:
-        print("{}: {}".format(key, ip_to_code[key]))
-    print("\nUnknowns...")
-    for key in unknowns:
-        print("{}: {}".format(key, unknowns[key]))
-    exit()
-
-
-# def menu():
-# Instantiate parser
-# parser = ArgumentParser(
-#        prog='DataServer.py',
-#        usage='%(progs)s [OPTIONS]',
-#        formatter_class=RawDescriptionHelpFormatter,
-#        description=dedent('''\
-#                --------------------------------------------------------------
-#                Data server for attack map application.
-#                --------------------------------------------------------------'''))
-
-# @TODO --> Add support for command line args?
-# define command line arguments
-# parser.add_argument('-db', '--database', dest='db_path', required=True, type=str, help='path to maxmind database')
-# parser.add_argument('-m', '--readme', dest='readme', help='print readme')
-# parser.add_argument('-o', '--output', dest='output', help='file to write logs to')
-# parser.add_argument('-r', '--random', action='store_true', dest='randomize', help='generate random IPs/protocols for demo')
-# parser.add_argument('-rs', '--redis-server-ip', dest='redis_ip', type=str, help='redis server ip address')
-# parser.add_argument('-sp', '--syslog-path', dest='syslog_path', type=str, help='path to syslog file')
-# parser.add_argument('-v', '--verbose', action='store_true', dest='verbose', help='run server in verbose mode')
-
-# Parse arguments/options
-# args = parser.parse_args()
-# return args
-
-
-def merge_dicts(*args):
-    super_dict = {}
-    for arg in args:
-        super_dict.update(arg)
-    return super_dict
-
-
-def track_flags(super_dict, tracking_dict, key1, key2):
-    if key1 in super_dict:
-        if key2 in super_dict:
-            if key1 in tracking_dict:
-                return None
-            else:
-                tracking_dict[super_dict[key1]] = super_dict[key2]
-        else:
-            return None
-    else:
-        return None
-
-
-def track_stats(super_dict, tracking_dict, key):
-    if key in super_dict:
-        node = super_dict[key]
-        if node in tracking_dict:
-            tracking_dict[node] += 1
-        else:
-            tracking_dict[node] = 1
-    else:
-        if key in unknowns:
-            unknowns[key] += 1
-        else:
-            unknowns[key] = 1
-
-
-def main():
-    if os.getuid() != 0:
-        print("Please run this script as root")
-        print("SHUTTING DOWN")
-        exit()
-
-    global db_path, log_file_out, redis_instance, syslog_path, hq_ip
-    global continents_tracked, countries_tracked, ips_tracked, postal_codes_tracked, event_count, unknown, ip_to_code, country_to_code
-
-    # args = menu()
-
-    # Connect to Redis
-    redis_instance = connect_redis()
-
-    # Find HQ lat/long
-    hq_dict = find_hq_lat_long(hq_ip)
-
-    # Follow/parse/format/publish syslog data
-    with io.open(syslog_path, "r", encoding="ISO-8859-1") as syslog_file:
-        syslog_file.readlines()
-        while True:
-            where = syslog_file.tell()
-            line = syslog_file.readline()
-            if not line:
-                sleep(0.1)
-                syslog_file.seek(where)
-            else:
-                syslog_data_dict = parse_syslog(line)
-                if syslog_data_dict:
-                    ip_db_unclean = parse_maxminddb(db_path, syslog_data_dict["src_ip"])
-                    if ip_db_unclean:
-                        event_count += 1
-                        ip_db_clean = clean_db(ip_db_unclean)
-
-                        msg_type = {"msg_type": get_msg_type()}
-                        msg_type2 = {"msg_type2": syslog_data_dict["type_attack"]}
-                        msg_type3 = {"msg_type3": syslog_data_dict["cve_attack"]}
-
-                        proto = {
-                            "protocol": get_tcp_udp_proto(
-                                syslog_data_dict["src_port"],
-                                syslog_data_dict["dst_port"],
-                            )
+def get_honeypot_stats(timedelta):
+    ES_query_stats = {
+        "bool": {
+            "must": [],
+            "filter": [
+                {
+                    "bool": {
+                        "should": [
+                            {
+                                "bool": {
+                                    "should": [
+                                        {"match_phrase": {"type.keyword": "Adbhoney"}}
+                                    ],
+                                    "minimum_should_match": 1,
+                                }
+                            },
+                            {
+                                "bool": {
+                                    "should": [
+                                        {"match_phrase": {"type.keyword": "Ciscoasa"}}
+                                    ],
+                                    "minimum_should_match": 1,
+                                }
+                            },
+                            {
+                                "bool": {
+                                    "should": [
+                                        {
+                                            "match_phrase": {
+                                                "type.keyword": "CitrixHoneypot"
+                                            }
+                                        }
+                                    ],
+                                    "minimum_should_match": 1,
+                                }
+                            },
+                            {
+                                "bool": {
+                                    "should": [
+                                        {"match_phrase": {"type.keyword": "ConPot"}}
+                                    ],
+                                    "minimum_should_match": 1,
+                                }
+                            },
+                            {
+                                "bool": {
+                                    "should": [
+                                        {"match_phrase": {"type.keyword": "Cowrie"}}
+                                    ],
+                                    "minimum_should_match": 1,
+                                }
+                            },
+                            {
+                                "bool": {
+                                    "should": [
+                                        {"match_phrase": {"type.keyword": "Ddospot"}}
+                                    ],
+                                    "minimum_should_match": 1,
+                                }
+                            },
+                            {
+                                "bool": {
+                                    "should": [
+                                        {"match_phrase": {"type.keyword": "Dicompot"}}
+                                    ],
+                                    "minimum_should_match": 1,
+                                }
+                            },
+                            {
+                                "bool": {
+                                    "should": [
+                                        {"match_phrase": {"type.keyword": "Dionaea"}}
+                                    ],
+                                    "minimum_should_match": 1,
+                                }
+                            },
+                            {
+                                "bool": {
+                                    "should": [
+                                        {"match_phrase": {"type.keyword": "ElasticPot"}}
+                                    ],
+                                    "minimum_should_match": 1,
+                                }
+                            },
+                            {
+                                "bool": {
+                                    "should": [
+                                        {"match_phrase": {"type.keyword": "Endlessh"}}
+                                    ],
+                                    "minimum_should_match": 1,
+                                }
+                            },
+                            {
+                                "bool": {
+                                    "should": [
+                                        {"match_phrase": {"type.keyword": "Glutton"}}
+                                    ],
+                                    "minimum_should_match": 1,
+                                }
+                            },
+                            {
+                                "bool": {
+                                    "should": [
+                                        {"match_phrase": {"type.keyword": "Hellpot"}}
+                                    ],
+                                    "minimum_should_match": 1,
+                                }
+                            },
+                            {
+                                "bool": {
+                                    "should": [
+                                        {"match_phrase": {"type.keyword": "Heralding"}}
+                                    ],
+                                    "minimum_should_match": 1,
+                                }
+                            },
+                            {
+                                "bool": {
+                                    "should": [
+                                        {"match_phrase": {"type.keyword": "Honeytrap"}}
+                                    ],
+                                    "minimum_should_match": 1,
+                                }
+                            },
+                            {
+                                "bool": {
+                                    "should": [
+                                        {"match_phrase": {"type.keyword": "Honeypots"}}
+                                    ],
+                                    "minimum_should_match": 1,
+                                }
+                            },
+                            {
+                                "bool": {
+                                    "should": [
+                                        {"match_phrase": {"type.keyword": "Log4pot"}}
+                                    ],
+                                    "minimum_should_match": 1,
+                                }
+                            },
+                            {
+                                "bool": {
+                                    "should": [
+                                        {"match_phrase": {"type.keyword": "Ipphoney"}}
+                                    ],
+                                    "minimum_should_match": 1,
+                                }
+                            },
+                            {
+                                "bool": {
+                                    "should": [
+                                        {"match_phrase": {"type.keyword": "Mailoney"}}
+                                    ],
+                                    "minimum_should_match": 1,
+                                }
+                            },
+                            {
+                                "bool": {
+                                    "should": [
+                                        {"match_phrase": {"type.keyword": "Medpot"}}
+                                    ],
+                                    "minimum_should_match": 1,
+                                }
+                            },
+                            {
+                                "bool": {
+                                    "should": [
+                                        {
+                                            "match_phrase": {
+                                                "type.keyword": "Redishoneypot"
+                                            }
+                                        }
+                                    ],
+                                    "minimum_should_match": 1,
+                                }
+                            },
+                            {
+                                "bool": {
+                                    "should": [
+                                        {"match_phrase": {"type.keyword": "Sentrypeer"}}
+                                    ],
+                                    "minimum_should_match": 1,
+                                }
+                            },
+                            {
+                                "bool": {
+                                    "should": [
+                                        {"match_phrase": {"type.keyword": "Tanner"}}
+                                    ],
+                                    "minimum_should_match": 1,
+                                }
+                            },
+                            {
+                                "bool": {
+                                    "should": [
+                                        {"match_phrase": {"type.keyword": "Wordpot"}}
+                                    ],
+                                    "minimum_should_match": 1,
+                                }
+                            },
+                        ],
+                        "minimum_should_match": 1,
+                    }
+                },
+                {
+                    "range": {
+                        "@timestamp": {
+                            "format": "strict_date_optional_time",
+                            "gte": "now-" + timedelta,
+                            "lte": "now",
                         }
-                        super_dict = merge_dicts(
-                            hq_dict,
-                            ip_db_clean,
-                            msg_type,
-                            msg_type2,
-                            msg_type3,
-                            proto,
-                            syslog_data_dict,
-                        )
+                    }
+                },
+            ],
+        }
+    }
+    return ES_query_stats
 
-                        # Track Stats
-                        track_stats(super_dict, continents_tracked, "continent")
-                        track_stats(super_dict, countries_tracked, "country")
-                        track_stats(super_dict, ips_tracked, "src_ip")
-                        event_time = strftime(
-                            "%d-%m-%Y %H:%M:%S", localtime()
-                        )  # local time
-                        # event_time = strftime("%Y-%m-%d %H:%M:%S", gmtime()) # UTC time
-                        track_flags(super_dict, country_to_code, "country", "iso_code")
-                        track_flags(super_dict, ip_to_code, "src_ip", "iso_code")
 
-                        # Append stats to super_dict
-                        super_dict["event_count"] = event_count
-                        super_dict["continents_tracked"] = continents_tracked
-                        super_dict["countries_tracked"] = countries_tracked
-                        super_dict["ips_tracked"] = ips_tracked
-                        super_dict["unknowns"] = unknowns
-                        super_dict["event_time"] = event_time
-                        super_dict["country_to_code"] = country_to_code
-                        super_dict["ip_to_code"] = ip_to_code
+def update_honeypot_data():
+    processed_data = []
+    last = {"1m", "1h", "24h"}
+    mydelta = 10
+    time_last_request = datetime.datetime.utcnow() - datetime.timedelta(seconds=mydelta)
+    while True:
+        now = datetime.datetime.utcnow()
+        # Get the honeypot stats every 10s (last 1m, 1h, 24h)
+        if now.second % 10 == 0 and now.microsecond < 500000:
+            honeypot_stats = {}
+            for i in last:
+                try:
+                    es_honeypot_stats = es.search(
+                        index="logstash-*",
+                        aggs={},
+                        size=0,
+                        track_total_hits=True,
+                        query=get_honeypot_stats(i),
+                    )
+                    honeypot_stats.update(
+                        {"last_" + i: es_honeypot_stats["hits"]["total"]["value"]}
+                    )
+                except Exception as e:
+                    print(e)
+            honeypot_stats.update({"type": "Stats"})
+            push_honeypot_stats(honeypot_stats)
 
-                        json_data = json.dumps(super_dict)
-                        redis_instance.publish("attack-map-production", json_data)
+        # Get the last 100 new honeypot events every 0.5s
+        mylast = str(time_last_request).split(" ")
+        mynow = str(
+            datetime.datetime.utcnow() - datetime.timedelta(seconds=mydelta)
+        ).split(" ")
+        ES_query = {
+            "bool": {
+                "must": [
+                    {
+                        "query_string": {
+                            "query": 'type:"Adbhoney" OR type:"Ciscoasa" OR type:"CitrixHoneypot" OR type:"ConPot" OR type:"Cowrie" OR type:"Ddospot" OR type:"Dicompot" OR type:"Dionaea" OR type:"ElasticPot" OR type:"Endlessh" OR type:"Glutton" OR type:"Hellpot" OR type:"Heralding" OR type:"Honeypots" OR type:"Honeytrap" OR type: "Ipphoney" OR type:"Log4pot" OR type:"Mailoney" OR type:"Medpot" OR type:"Redishoneypot" OR type:"Sentrypeer" OR type:"Tanner" OR type:"Wordpot"'
+                        }
+                    }
+                ],
+                "filter": [
+                    {
+                        "range": {
+                            "@timestamp": {
+                                "gte": mylast[0] + "T" + mylast[1],
+                                "lte": mynow[0] + "T" + mynow[1],
+                            }
+                        }
+                    }
+                ],
+            }
+        }
 
-                        # if args.verbose:
-                        #    print(ip_db_unclean)
-                        #    print('------------------------')
-                        #    print(json_data)
-                        #    print('Event Count: {}'.format(event_count))
-                        #    print('------------------------')
+        res = es.search(index="logstash-*", size=100, query=ES_query)
+        hits = res["hits"]
+        if len(hits["hits"]) != 0:
+            time_last_request = datetime.datetime.utcnow() - datetime.timedelta(
+                seconds=mydelta
+            )
+            for hit in hits["hits"]:
+                try:
+                    process_datas = process_data(hit)
+                    if process_datas != None:
+                        processed_data.append(process_datas)
+                except:
+                    pass
+        if len(processed_data) != 0:
+            push(processed_data)
+            processed_data = []
+        time.sleep(0.5)
 
-                        print("Event Count: {}".format(event_count))
-                        print("------------------------")
 
-                    else:
-                        continue
+def process_data(hit):
+    global dst_ip, dst_lat, dst_long, dst_iso_code, dst_country_name
+
+    fmt = "%Y-%m-%d %H:%M:%S"
+    utc = datetime.datetime.strptime(
+        (
+            str(hit["_source"]["@timestamp"][0:10])
+            + " "
+            + str(hit["_source"]["@timestamp"][11:19])
+        ),
+        fmt,
+    )
+    utc = utc.replace(tzinfo=tz.gettz("UTC"))
+    adt = utc.astimezone(tz.gettz("America/Halifax"))
+    etime = adt.strftime(fmt)
+
+    alert = {}
+    alert["honeypot"] = hit["_source"]["type"]
+    alert["country"] = hit["_source"]["geoip"].get("country_name", "")
+    alert["country_code"] = hit["_source"]["geoip"].get("country_code2", "")
+    alert["continent_code"] = hit["_source"]["geoip"].get("continent_code", "")
+    alert["dst_lat"] = dst_lat
+    alert["dst_long"] = dst_long
+    alert["dst_ip"] = dst_ip
+    alert["dst_iso_code"] = dst_iso_code
+    alert["dst_country_name"] = dst_country_name
+    alert["tpot_hostname"] = hit["_source"]["t-pot_hostname"]
+    alert["event_time"] = str(etime)
+    alert["iso_code"] = hit["_source"]["geoip"]["country_code2"]
+    alert["latitude"] = hit["_source"]["geoip"]["latitude"]
+    alert["longitude"] = hit["_source"]["geoip"]["longitude"]
+    alert["src_ip"] = hit["_source"]["src_ip"]
+    if hit["_source"].get("geoip_ext"):
+        alert["dst_lat"] = hit["_source"]["geoip_ext"]["latitude"]
+        alert["dst_long"] = hit["_source"]["geoip_ext"]["longitude"]
+        alert["dst_ip"] = hit["_source"]["geoip_ext"]["ip"]
+        alert["dst_iso_code"] = hit["_source"]["geoip_ext"].get("country_code2", "")
+        alert["dst_country_name"] = hit["_source"]["geoip_ext"].get("country_name", "")
+    try:
+        alert["dst_port"] = hit["_source"]["dst_port"]
+    except:
+        alert["dst_port"] = 0
+    alert["protocol"] = port_to_type(hit["_source"]["dest_port"])
+    try:
+        alert["src_port"] = hit["_source"]["src_port"]
+    except:
+        alert["src_port"] = 0
+    try:
+        alert["ip_rep"] = hit["_source"]["ip_rep"]
+    except:
+        alert["ip_rep"] = "reputation unknown"
+    if not alert["src_ip"] == "":
+        try:
+            alert["color"] = service_rgb[alert["protocol"].upper()]
+        except:
+            alert["color"] = service_rgb["OTHER"]
+        return alert
+    else:
+        print("SRC IP EMPTY")
+
+
+def port_to_type(port):
+    port = int(port)
+    try:
+        if port == 21 or port == 20:
+            return "FTP"
+        if port == 22 or port == 2222:
+            return "SSH"
+        if port == 23 or port == 2223:
+            return "TELNET"
+        if port == 25 or port == 143 or port == 110 or port == 993 or port == 995:
+            return "EMAIL"
+        if port == 53:
+            return "DNS"
+        if port == 80 or port == 81 or port == 8080:
+            return "HTTP"
+        if port == 161:
+            return "SNMP"
+        if port == 443 or port == 8443:
+            return "HTTPS"
+        if port == 445:
+            return "SMB"
+        if port == 1433 or port == 1521 or port == 3306:
+            return "SQL"
+        if port == 2575 or port == 11112:
+            return "MEDICAL"
+        if port == 5900:
+            return "VNC"
+        if port == 3389:
+            return "RDP"
+        if port == 5060 or port == 5061:
+            return "SIP"
+        if port == 5555:
+            return "ADB"
+        else:
+            return str(port)
+    except:
+        return "OTHER"
+
+
+def push(alerts):
+    global ips_tracked, continent_tracked, countries_tracked, ip_to_code, ports, event_count, countries_to_code
+
+    redis_instance = connect_redis(redis_ip)
+
+    for alert in alerts:
+        ips_tracked[alert["src_ip"]] = ips_tracked.get(alert["src_ip"], 1) + 1
+        continent_tracked[alert["continent_code"]] = (
+            ips_tracked.get(alert["continent_code"], 1) + 1
+        )
+        countries_tracked[alert["country"]] = (
+            countries_tracked.get(alert["country"], 1) + 1
+        )
+        ip_to_code[alert["src_ip"]] = alert["iso_code"]
+        countries_to_code[alert["country"]] = alert["country_code"]
+        ports[alert["dst_port"]] = ports.get(alert["dst_port"], 0) + 1
+
+        if output_text == "ENABLED":
+            # Convert UTC to local time
+            my_time = datetime.datetime.strptime(
+                alert["event_time"], "%Y-%m-%d %H:%M:%S"
+            )
+            my_time = my_time.replace(tzinfo=pytz.UTC)  # Assuming event_time is in UTC
+            local_event_time = my_time.astimezone(local_tz)
+            local_event_time = local_event_time.strftime("%Y-%m-%d %H:%M:%S")
+
+            # Build the table data
+            table_data = [
+                [
+                    local_event_time,
+                    alert["country"],
+                    alert["src_ip"],
+                    alert["ip_rep"].title(),
+                    alert["protocol"],
+                    alert["honeypot"],
+                    alert["tpot_hostname"],
+                ]
+            ]
+
+            # Define the minimum width for each column
+            min_widths = [19, 20, 15, 18, 10, 14, 14]
+
+            # Format and print each line with aligned columns
+            for row in table_data:
+                formatted_line = " | ".join(
+                    "{:<{width}}".format(str(value), width=min_widths[i])
+                    for i, value in enumerate(row)
+                )
+                print(formatted_line)
+
+        json_data = {
+            "protocol": alert["protocol"],
+            "color": alert["color"],
+            "iso_code": alert["iso_code"],
+            "honeypot": alert["honeypot"],
+            "ips_tracked": ips_tracked,
+            "src_port": alert["src_port"],
+            "event_time": alert["event_time"],
+            "src_lat": alert["latitude"],
+            "src_ip": alert["src_ip"],
+            "ip_rep": alert["ip_rep"].title(),
+            "continents_tracked": continent_tracked,
+            "type": "Traffic",
+            "country_to_code": countries_to_code,
+            "dst_long": alert["dst_long"],
+            "continent_code": alert["continent_code"],
+            "dst_lat": alert["dst_lat"],
+            "ip_to_code": ip_to_code,
+            "countries_tracked": countries_tracked,
+            "event_count": event_count,
+            "country": alert["country"],
+            "src_long": alert["longitude"],
+            "unknowns": {},
+            "dst_port": alert["dst_port"],
+            "dst_ip": alert["dst_ip"],
+            "dst_iso_code": alert["dst_iso_code"],
+            "dst_country_name": alert["dst_country_name"],
+            "tpot_hostname": alert["tpot_hostname"],
+        }
+        json_data["ips_tracked"] = ips_tracked
+        event_count += 1
+        tmp = json.dumps(json_data)
+        redis_instance.publish(redis_channel, tmp)
 
 
 if __name__ == "__main__":
+    print(version)
     try:
-        main()
+        while True:
+            try:
+                update_honeypot_data()
+            except Exception as e:
+                if os.getenv("REDIS_PORT") in str(e):
+                    print("[ ] Waiting for Redis ...")
+                if "urllib3.connection" in str(e):
+                    print("[ ] Waiting for Elasticsearch ...")
+                    time.sleep(5)
+
     except KeyboardInterrupt:
-        shutdown_and_report_stats()
+        print("\nSHUTTING DOWN")
+        exit()
